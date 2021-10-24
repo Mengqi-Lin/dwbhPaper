@@ -21,9 +21,10 @@ source("dBH_utils.R")
 ### mu1_g : vector for mu1 in each group. mu1_g = c(1.5, 4)
 ### pi1_g : vector for pi1 in each group. pi1_g = c(0.1, 0.05)
 ```{r}
-n_g = c(1000,2000) 
-mu1_g = c(1.5, 4)
-pi1_g = c(0.1, 0.05)
+ng = 2
+n_g = c(1000,1000) 
+mu1_g = c(2, 2)
+pi1_g = c(0.05, 0.1)
 pi0_g = 1-pi1_g
 alpha <- 0.05
 ```
@@ -45,31 +46,64 @@ lfdr.inverse1 <- function(lfdr) {
 lfdr.inverse2 <- function(lfdr) {
   lfdr.inverse(lfdr, pi0 = pi0_g[2], mu1 = mu1_g[2])
 }
+
+## lfdr.inverse difference
+diff_lfdr <- function(x) {
+  lfdr.inverse2(x) - lfdr.inverse1(x)
+}
+
+## the point where they accord
+for(i in seq(0.2, 0.25, 0.0001)){
+  if(diff_lfdr(i)<0){
+    phase_tran <- i
+    break
+  }
+}
 ```
 
 
 ### the plots of lfdr.inverse function in each group:
 ```{r}
-x = seq(0.001,0.9999,0.01)
-plot(x = x, y = lfdr.inverse1(x), type = "l")
-lines(x = x, y = lfdr.inverse2(x), type = "l",col = "green")
+par(mar = c(4,4,4,4))
+plot(lfdr.inverse1, type = "l")
+plot(lfdr.inverse2, type = "l",col = "green", add = T)
 ```
+
+```{r}
+pi1_g
+mu1_g
+```
+
 
 See lfdr.inverse in interval [0, 0.3]
 ```{r}
-thr <- 0.3
-x = seq(0.001,thr,0.01)
-plot(x = x, y = lfdr.inverse1(x), type = "l")
-lines(x = x, y = lfdr.inverse2(x), type = "l",col = "green")
+thr <- 0.1
+plot(lfdr.inverse1, from = 0, to = thr, type = "l", lwd = 2)
+plot(lfdr.inverse2, from = 0, to = thr, type = "l",col = "green", lwd = 2, add = T)
+legend("topleft", legend = c(expression(paste(pi[1], ": 0.10, ", mu[1],": 1.5")),
+                             expression(paste(pi[1], ": 0.05, ", mu[1],": 4.0"))),
+       col = c("black", "green"), lwd = c(2, 2)
+       )
+abline(v = phase_tran, col = c("grey"), lwd = 2)
+text(phase_tran, 0, phase_tran)
 ```
 
 
-See lfdr.inverse in interval [0.3, 1]
-```{r}
-x = seq(thr,1,0.01)
-plot(x = x, y = lfdr.inverse1(x), type = "l")
-lines(x = x, y = lfdr.inverse2(x), type = "l",col = "green")
-```
+<!-- ```{r} -->
+<!-- plot(diff_lfdr, from = 0, to = 0.3) -->
+<!-- abline(h = 0, v = phase_tran, col = c("grey", "red"), lwd = c(1,2)) -->
+<!-- text(phase_tran, diff_lfdr(0.3), phase_tran) -->
+<!-- ``` -->
+
+
+
+
+
+<!-- See lfdr.inverse in interval [0.3, 1] -->
+<!-- ```{r} -->
+<!-- plot(lfdr.inverse1, from = thr, to = 1, type = "l") -->
+<!-- plot(lfdr.inverse2, from = thr, to = 1, type = "l",col = "green", add = T) -->
+<!-- ``` -->
 
 ## mFDR function and mFDR plots versus alpha
 ```{r}
@@ -106,47 +140,24 @@ plot(x = seq(0,1,0.01), y = mFDR1(x), type = "l")
 ```{r}
 lambda_alpha <- vecbinsolv(zf = alpha, fun = mFDR1 , tlo = 0, thi = 1, nits = 30)
 lambda_alpha 
+
+qnorm(lfdr.inverse1(lambda_alpha ), lower.tail = F)
+vecbinsolv(zf = alpha, fun = lfdr.inverse1  , tlo = 0, thi = 1)
+mFDR1(lambda_alpha)
 ```
 
 
 ## Compute oracle weights
 ```{r}
-oracle.weights <- function(alpha, n_g, pi0_g, mu1_g) {
-  pi_g <- n_g/sum(n_g)
-  #lambda_alpha <- solve.mFDR(alpha, n_g, pi0_g, mu1_g)
-  mFDR1 <- function(c) {
-    V <- c()
-    R <- c()
-    for(i in 1:length(pi0_g)) {
-      pi0 = pi0_g[i]
-      mu1 = mu1_g[i]
-      n = n_g[i]
-      t = lfdr.inverse(c, pi0, mu1)
-      V[i] = n*pi0*t
-      R[i] = V[i] + n*(1-pi0)*nonnull.cdf(t, mu1)
-    }
-    return(sum(V)/sum(R))
-  }
-  lambda_alpha <- vecbinsolv(zf = alpha, fun = mFDR1 , tlo = 0, thi = 1, nits = 30)
-  w <- c()
-  t <- c()
-  for(i in 1:length(n_g)) {
-    t[i] <- lfdr.inverse(lambda_alpha, pi0 = pi0_g[i], mu1 = mu1_g[i])
-  }
-  t <- t/sum(t*pi0_g*pi_g)
-  for(i in 1:length(n_g)) {
-    w <- c(w, rep(t[i], n_g[i]))
-  }
-  return(w)
-}
-oracle_weights <- oracle.weights(alpha, n_g, pi0_g, mu1_g)
+
+oracle_weights <- oracle.weights(alpha, n_g, pi0_g, mu1_g, pi0Est = F)
 oracle_weights <- unique(oracle_weights)
 oracle_weights
 ```
 
 ## Generate data based on our setting
 ```{r}
-set.seed(1)
+
 
 genmu <- function(n, pi1, mu1){
   m <- ceiling(n * pi1)
@@ -177,105 +188,89 @@ gen_data <- function(n_g, mu1_g, pi1_g,
   }
   return(list(zvals = zvals, groups = groups, H0 = H0, Sigma = Sigma))
 }
+nexp <- 100
+
+set.seed(1)
 data <- gen_data(n_g = n_g, mu1_g = mu1_g, pi1_g = pi1_g, 
-                  Sigma_type = "iid",
+                 rho = 0.8,
+                  Sigma_type = "AR",
                   side = "right", 
-                  nreps = 100)
+                  nreps = nexp)
 zvals <- data$zvals
 groups <- data$groups
 H0 <- data$H0
+Sigma <- data$Sigma
 ```
+
+
+
+
+
+
+
 
 ## Calculate the adaptive optimal weights based on the package locfdr
 ```{r}
-adaptive_optimal.weights <- function(groups, zvals, alpha, side, pi0Est) {
-  weights <- c()
-  lfdr_g <- list()
-  ngroups <- length(unique(groups))
-  pi0_g <- c()
-  n_g <- c()
-  for(i in 1: ngroups) {
-    g <- unique(groups)[i]
-    zvals_g <- zvals[groups == g]
-    n_g[i] <- sum(groups == g)
-    lfdrres <- locfdr(zvals_g, plot = 0)
-    lfdr_g[[i]] <- lfdrres$fdr
-    pi0_g[i] <- min(lfdrres$fp0[1,3], lfdrres$fp0[3,3], lfdrres$fp0[5,3], 1) ###????
-  }
-  n <- sum(n_g)
-  pi_g <- n_g/n
-  
-  lfdr <- unlist(lfdr_g, F, F)
-  lfdr.order <- order(lfdr)
-  st.lfdr <- lfdr[lfdr.order]
-  k = max(which(cumsum(st.lfdr)/(1:n) <= alpha))
-  # k = 1
-  # while(k < n && (1/k)*sum(st.lfdr[1:k]) < alpha) {
-  #   k = k + 1
-  # }
-  # k <- k-1
-  thr <- st.lfdr[k]
-  
-  st.groups <- groups[lfdr.order]
-  st.pvals <- zvals_pvals(zvals, side)[lfdr.order]
-  
-  t_g <- c()
-  for(j in 1:ngroups) {
-    g <- unique(groups)[j]
-    st.lfdr_g <- st.lfdr[st.groups == j]
-    
-    if(!any(which(st.lfdr_g < thr))) {
-      t_g[j] <- 0
-      #weights[groups == g] <- 1
-    } else {
-      pvals.order_g <- st.pvals[st.groups == j]
-      t_g[j] <- pvals.order_g[max(which(st.lfdr_g < thr))]
-      #weights[groups == g] <- pvals.order_g[max(which(st.lfdr_g < thr))]
-    }
-  }
-  # if(pi0Est == F) {
-  #   pi0_g <- rep(1, ngroups)
-  # }
-  
-  if(sum(t_g*pi_g*pi0_g) < 1e-6) {
-    return(rep(1/sum(pi_g*pi0_g), length(zvals)))
-  }
-  #?
-  t_g.init <- t_g
-  
-  t_g <- t_g/sum(t_g*pi_g*pi0_g)
-  
-  for(j in 1: ngroups) {
-    g <- unique(groups)[j]
-    weights[groups == g] <- t_g[j]
-  }
-  
-  return(list(weights = weights, thr = thr, t_g = t_g, t_g.init = t_g.init))
-}
 side <- "one"
 adaptive_optimal_weights <- lapply(zvals, function(zv){
-  adaptive_optimal.weights(groups, zv, alpha, side)
+  adaptive_optimal.weights(groups, zv, alpha, side, type = "lin_exp", pi0Est = F)
 })
+
+#demo <- adaptive_optimal.weights(groups, zvals, alpha, side, type = "lin")
 ```
 
 ## plot the adaptive weights versus the oracle ones
 ```{r}
 AOW_unique <- sapply(adaptive_optimal_weights, function(w){
-  unique(w$weights)
+  unique(w)
 })
 rowMeans(AOW_unique)
 
-plot(c(Reduce(rbind, AOW_unique), oracle_weights), col = c(rep(c("black", "green"), length(AOW_unique)/2), c("blue", "red")))
+plot(c(Reduce(rbind, AOW_unique)), col = c(rep(c("black", "red"), length(AOW_unique)/2)))
+abline(h = oracle_weights, col = c("black", "red"))
+legend("topright", legend = c("group1", "group2"), col = c("black", "red"), lwd = c(1, 1))
+
 ```
+
+
+```{r}
+for(i in 1:nexp){
+  print(i)
+  print(unique(adaptive_optimal_weights[[i]]$weights))
+}
+
+unique(adaptive_optimal_weights[[27]]$weights)
+```
+
+
+
+
+
+
+
+```{r}
+oracle_weights
+thr_diff <- sapply(adaptive_optimal_weights, function(w){
+  unique(w$thr_diff)
+})
+hist(thr_diff)
+```
+
+
 
 
 ## hist the thr(lambda_alpha) of our adaptive procedure 
 ```{r}
-AOW_thr <- sapply(adaptive_optimal_weights, function(w){
+est_thr <- sapply(adaptive_optimal_weights, function(w){
   unique(w$thr)
 })
-hist(AOW_thr)
-abline(v = lambda_alpha, col = "red")
+```
+
+
+```{r}
+hist(est_thr, main = expression(paste("Distribution of estimated_", lambda[alpha])), xlab = NULL)
+abline(v = c(lambda_alpha, phase_tran), col = c("red", "blue"), lwd = 3)
+legend("topleft", legend = c(expression(lambda[alpha]), "phase_trans"), col = c("red", "blue"), lwd = 3)
 ```
 
 ## plot the adaptive t_g versus the oracle ones
@@ -292,4 +287,79 @@ plot(c(Reduce(rbind, AOW_tinit), oracle_t), col = c(rep(c("black", "green"), len
 AOW_tinit_clean <- AOW_tinit[, -ceiling(which(AOW_tinit > 0.5)/2)]
 plot(c(Reduce(rbind, AOW_tinit_clean), oracle_t), col = c(rep(c("black", "green"), length(AOW_tinit_clean)/2), c("blue", "red")))
 ```
+
+
+
+
+
+```{r}
+zvals_lfdr_Res <- list()
+zcut <- 2
+ngroups <- 2
+i <- 2
+ind <- c(0, n_g)
+zvals <- Z
+
+zvals_lfdr_Res <- lapply(zvals, function(z){
+  re <- lapply(1:ngroups, function(i){
+    lfdr <- locfdr(z[(ind[i]+1):(ind[i]+ind[i+1])], nulltype = 0, plot = 0)$fdr
+    index <- which(z[(ind[i]+1):(ind[i]+ind[i+1])] > zcut)
+    zv <- z[index + ind[i]]
+    o <- order(zv)
+    zv <- zv[o]
+    lfdr <- lfdr[index][o]
+    return(list(zvals = zv, locfdr = lfdr))
+  })
+  return(re)
+})
+```
+
+
+```{r}
+lfdr_oracle <- function(z, pi0, mu1) {
+  pi0*dnorm(z)/(pi0*dnorm(z)+(1-pi0)*dnorm(z, mean = mu1))
+}
+lfdr_oracle1 <- function(z){
+  lfdr_oracle(z, pi0_g[1], mu1_g[1])
+}
+lfdr_oracle2 <- function(z){
+  lfdr_oracle(z, pi0_g[2], mu1_g[2])
+}
+
+```
+
+
+
+```{r}
+plot(c(zcut, 5), c(0, 1), type = 'n',
+     xlab = "zvals (group1)",
+     ylab = "locfdr",
+     main = "", axes = T)
+nexp <- 100
+for(i in 1:nexp) {
+  points(zvals_lfdr_Res[[i]][[1]]$zvals, zvals_lfdr_Res[[i]][[1]]$locfdr, type = "b")
+}
+plot(lfdr_oracle1, from = zcut, to = 5, type = 'l', col = "red", add = T, lwd = 2)
+legend("topright", "oracle_lfdr", col = "red", lwd = 2)
+```
+
+
+
+```{r}
+plot(c(zcut, 5), c(0, 1), type = 'n',
+     xlab = "zvals (group2)",
+     ylab = "locfdr",
+     main = "", axes = T)
+
+for(i in 1:nexp) {
+  points(zvals_lfdr_Res[[i]][[2]]$zvals, zvals_lfdr_Res[[i]][[2]]$locfdr, type = "b")
+}
+plot(lfdr_oracle2, from = zcut, to = 5, type = 'l', col = "red", add = T, lwd = 2)
+legend("topright", "oracle_lfdr", col = "red", lwd = 2)
+```
+
+
+
+
+
 

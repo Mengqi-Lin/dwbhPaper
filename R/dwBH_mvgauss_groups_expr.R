@@ -1,9 +1,11 @@
 dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g, 
                              mu_size_type,
-                             rho, Sigma_type,
+                             rho, 
+                             Sigma_type,
                              side,
-                             alphas, nreps, weight_type,
-                             MC_type,
+                             alphas, 
+                             nreps, 
+                             weight_type,
                              gamma = 0.9,
                              tautype = "QC",
                              skip_dBH2 = TRUE,
@@ -30,12 +32,11 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
   eigSigma <- eigen(Sigma)
   sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
   
-  methods <- gen_methods(gamma, weight_type, MC_type,
-                         skip_dBH2 = T)
+  methods <- gen_methods_dwBH(gamma, weight_type, skip_dBH2 = F)
+  
   expr_params <- expand.grid(
     gamma = gamma,
-    weight_type = weight_type,
-    MC_type = MC_type
+    weight_type = weight_type
   )
   
   results <- lapply(1:nalphas, function(k){
@@ -44,8 +45,21 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
     return(list(alpha = alphas[k],
                 FDP = tmp,
                 power = tmp,
-                secBH = tmp,
-                sumWeights = tmp))
+                secBH = tmp))
+  })
+  
+
+  optimal_weights <- lapply(1:nalphas, function(k){
+    lapply(1:nrow(expr_params), function(j){
+      gam <- expr_params[j, "gamma"]
+      gam <- ifelse(is.na(gam), 1/normalize(1:n), gam)
+      oracle.weights(alpha = alphas[k]*gam, n_g = n_g, pi0_g = 1-pi1_g, mu1_g = mu1_g, pi0Est = T)
+    })
+  })
+
+  pi1 <- sum(n_g*pi1_g)/n
+  GBH_weights <- lapply(1:nalphas, function(k){
+    rep(pi1_g/(1-pi1_g)/pi1, n_g)
   })
   
   pb <- txtProgressBar(style=3)
@@ -56,18 +70,12 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
       obj <- list()
       alpha <- alphas[k]
       
-      # ## BH rejections
-      # for (x in union(NA, geom_fac)){
-      #   if (is.na(x)){
-      #     avals <- 1:n
-      #   } else {
-      #     avals <- geom_avals(x, n)
-      #   }
-      #   rejs_BH <- BH(pvals, alpha, avals, FALSE)
-      #   rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
-      #   obj <- c(obj, list(rejs_BH, rejs_BH_safe))
-      # }
-      # 
+      ## BH rejections
+      avals <- 1:n
+      rejs_BH <- BH(pvals, alpha, avals, FALSE)
+      rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
+      obj <- c(obj, list(rejs_BH, rejs_BH_safe))
+
       # ## BC rejections
       # rejs_BC <- BC(pvals, alpha)
       # obj <- c(obj, list(rejs_BC))
@@ -76,39 +84,39 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
       # nBHBC <- length(obj)
       
       ## dwBH rejections and wBH rejections
+
       for (j in 1:nrow(expr_params)){
         fac <- expr_params[j, 1]
         weight_type <- expr_params[j, 2]
-        MC_type <- expr_params[j, 3]
         
         avals_type <- "BH"
         avals <- 1:n
-        qvals <- qvals_BH_reshape(pvals, avals)
+        #qvals <- qvals_BH_reshape(pvals, avals)
         if (is.na(fac)){
           gamma <- NULL
         } else {
           gamma <- fac
         }
+        
+        weights <- switch(weight_type, 
+                          "GBH" = GBH_weights[[k]],
+                          "optimal" = optimal_weights[[k]][[j]])
+        
         rejs_dBH <- dBH_mvgauss(
           zvals = zvals,
           Sigma = Sigma,
           side = side,
           alpha = alpha,
           gamma = gamma, 
-          covariates = groups,
           niter = 1,
           tautype = "QC",
-          weight_type = weight_type,
-          MC_type = MC_type,
-          pi0_oracle = 1-pi1_g,
-          mu1_oracle = mu1_g,
+          weights = weights, 
           avals_type = avals_type)
         # rejs_dBH$maxq <- ifelse(
         #   length(rejs_dBH$initrejs) == 0, NA,
         #   max(qvals[rejs_dBH$initrejs] / alpha))
         rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
-        rejs_wBH <- list(rejs = rejs_dBH$dBH_rej0)
-        obj <- c(obj, list(rejs_dBH, rejs_dBH_init, rejs_wBH))
+        obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
       }
       
       if (!skip_dBH2){
@@ -116,7 +124,6 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
         for (j in 1:nrow(expr_params)){
           fac <- expr_params[j, 1]
           weight_type  <- expr_params[j, 2]
-          type <- expr_params[j, 3]
           avals_type <- "BH"
           avals <- 1:n
 
@@ -157,9 +164,9 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
       results[[k]]$secBH[inds, i] <- sapply(obj[inds], function(output){
         output$secBH
       })
-      results[[k]]$sumWeights[inds, i] <- sapply(obj[inds], function(output){
-        output$sumWeights
-      })
+      # results[[k]]$sumWeights[inds, i] <- sapply(obj[inds], function(output){
+      #   output$sumWeights
+      # })
       # results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
       #   output$maxq
       # })

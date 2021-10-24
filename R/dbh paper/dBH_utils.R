@@ -1,10 +1,8 @@
 zvals_pvals <- function(zvals, side){
-    if (side == "one" | side == "right"){
+    if (side == "one"){
         pnorm(zvals, lower.tail = FALSE)
     } else if (side == "two"){
         2 * pnorm(abs(zvals), lower.tail = FALSE)
-    } else {
-      stop("invalid side")
     }
 }
 
@@ -156,8 +154,6 @@ RBH_init <- function(pvals, qvals, alpha, alpha0,
                 init_acclist = init_acclist))
 }
 
-
-
 expand_piecewise_const <- function(x, y, extrax){
     high <- tail(x, 1)
     x <- c(head(x, -1), extrax)
@@ -222,9 +218,3 @@ lm_mvt <- function(y, X, subset, intercept){
     list(tvals = tvals[subset], df = df,
          Sigma = Sigma[subset, subset])
 }
-
-groups_by_filter <- function(covariate, nbins){
-  rfs <- rank(covariate, ties.method="first")/length(covariate)
-  as.factor(ceiling( rfs* nbins))
-}
-

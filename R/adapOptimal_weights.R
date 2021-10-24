@@ -111,9 +111,6 @@ oracle.weights <- function(alpha, n_g, pi0_g, mu1_g, pi0Est = T) {
 }
 
 
-unique(oracle.weights(alpha, n_g, pi0_g, mu1_g, pi0Est = F))
-
-
 lfdr.inverse <- function(lfdr, pi0, mu1){
   1 - pnorm(1/mu1*log((pi0/lfdr - pi0)/(1-pi0)) + mu1/2)
 }

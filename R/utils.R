@@ -111,7 +111,10 @@ FDPpower <- function(rejs, H0){
     return(c(FDP, power))
 }
 
-#### The following four funtions compute the intersection of two lines given by (x1, y1) and (x2, y2) where x1 and y1 (resp. x2 and y2) are vectors of same length but length(x1) may differ from length(x2). The lines are interpolated linearly within the range and with the leftmost/rightmost value outside the range. 
+#### The following four funtions compute the intersection of two lines given 
+# by (x1, y1) and (x2, y2) where x1 and y1 (resp. x2 and y2) are vectors of
+# same length but length(x1) may differ from length(x2). The lines are interpolated
+# linearly within the range and with the leftmost/rightmost value outside the range.
 interpolate_one_point <- function(x1, x2, y1, y2, newx){
     lambda <- (x2 - newx) / (x2 - x1)
     lambda * y1 + (1 - lambda) * y2

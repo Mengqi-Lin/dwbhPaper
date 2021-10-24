@@ -5,6 +5,7 @@ source("utils.R")
 
 genSigma <- function(n, rho = 0,
                      type = c("AR", "MA", "equi", "block", "iid"),
+                     ifsqrt = F,
                      bsize = 10){
   type <- type[1]
   if (type == "AR"){
@@ -31,10 +32,16 @@ genSigma <- function(n, rho = 0,
   } else if (type == "iid"){
     Sigma <- diag(n)
   }
-  return(Sigma)
+  if(!ifsqrt) {
+    return(Sigma)
+  }
+  if (type == "iid") {
+    sqrtSigma <- Sigma
+  } else {
+    sqrtSigma <- with(eigen(Sigma), vectors %*% (sqrt(values) * t(vectors)))
+  }
+  return(list(Sigma = Sigma, sqrtSigma = sqrtSigma))
 }
-
-#genSigma(8, 0.8, "AR")
 
 genmu <- function(n, pi1, mu1,
                   posit_type = c("random", "fix"),
@@ -48,32 +55,31 @@ genmu <- function(n, pi1, mu1,
     inds <- 1:m
   }
   mu <- rep(0, n)
-  altmu <- switch(mu_type,
-                  `1` = rep(1, m),
-                  `2` = rnorm(m),
-                  `3` = rep(1, m) + 0.15 * (2 * rbinom(m, 1, 0.5) - 1))
-  mu[inds] <- mu1 * altmu
-  mu
+  mu[inds] <- switch(mu_type,
+                  `1` = rep(mu1, m),
+                  `2` = rep(mu1, m) + rnorm(m, sd = 0.3), 
+                  `3` = mu1 * (rep(1, m) + 0.15 * (2 * rbinom(m, 1, 0.5) - 1)))
+  return(mu)
 }
 
 
-
-gen_methods <- function(gamma,
-                        weight_type,
-                        MC_type,
-                        skip_dBH2){
+## automatically including BH procedure and BY procedure in the front.
+gen_methods_dwBH <- function(gamma,
+                             weight_type,
+                             skip_dBH2){
   expr_params <- expand.grid(
     gamma = gamma,
-    weight_type = weight_type,
-    MC_type = MC_type
+    weight_type = weight_type
   )
   
   # BH_methods <- sapply(weight_type, function(x){
-  #   weight_type <- paste0("weighting(", x, ")")
+  #   weight_type <- paste0("(", x, ")")
   #   tmp <- paste0("BH_", weight_type)
   #   c(tmp, paste0(tmp, "_safe"))
   # })
-  methods <- c()
+  tmp <- "BH_(trivial)"
+  BH_methods <- c(tmp, paste0(tmp, "_safe"))
+  methods <- c(as.character(BH_methods))
 
   dBH_methods <- apply(expr_params, 1, function(x){
     if (is.na(x[1])){
@@ -82,20 +88,13 @@ gen_methods <- function(gamma,
       gamma <- x[1]
     }
     
-    weight_type <- paste0("weighting(", x[2], ")")
-
-    MC_type <- x[3]
+    weight_type <- paste0("(", x[2], ")")
     
     method1 <- paste0("dwBH_", weight_type,
-                      "_", MC_type,
                       "_", gamma)
     method2 <- paste0("dwBH_init_", weight_type,
-                      "_", MC_type,
                       "_", gamma)
-    method3 <- paste0("wBH_", weight_type,
-                      "_", MC_type,
-                      "_", gamma)
-    c(method1, method2, method3)
+    c(method1, method2)
   })
   methods <- c(methods, as.character(dBH_methods))
   if (!skip_dBH2){
@@ -106,13 +105,10 @@ gen_methods <- function(gamma,
         gamma <- x[1]
       }
       weight_type <- paste0("weighting(", x[2], ")")
-      tautype <- x[3]
       
       method1 <- paste0("dwBH2_", weight_type,
-                        "_", MC_type,
                         "_", gamma)
       method2 <- paste0("dwBH2_init_", weight_type,
-                        "_", MC_type,
                         "_", gamma)
       c(method1, method2)
     })
@@ -122,23 +118,28 @@ gen_methods <- function(gamma,
   return(methods)
 }
 
+
 gen_data <- function(n_g, mu1_g, pi1_g, 
                      rho, Sigma_type,
+                     sqrtSigma = NULL,
                      side, 
-                    nreps){
+                     nreps){
   n <- sum(n_g)
   ngroups <- length(n_g)
+  
   if (!(length(n_g) == length(mu1_g) & length(n_g) == length(pi1_g))){
     stop("Each group should have its corresponding pi1 and mu1.")
   }
-  Sigma <- genSigma(n, rho, Sigma_type)
-  if(Sigma_type == "iid") {
-    sqrtSigma <- Sigma
-  } else {
-    stop("not idd")
-    # eigSigma <- eigen(Sigma)
-    # sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
-  }
+  
+  if(is.null(sqrtSigma)) {
+    if(Sigma_type == "iid") {
+      sqrtSigma <- diag(n)
+    } else {
+      Sigma <- genSigma(n, rho, Sigma_type)
+      eigSigma <- eigen(Sigma)
+      sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
+    }
+  } 
   
   mu <- c()
   groups <- c()
@@ -147,7 +148,6 @@ gen_data <- function(n_g, mu1_g, pi1_g,
     groups <- c(groups, rep(j , n_g[j]))
   }
   H0 <- mu == 0
-  #oracle.weights <- oracle.weights(alpha, n_g, pi0_g = 1- pi1_g, mu1_g = mu1_g)
   zvals <- list()
   for (i in 1:nreps){
     if (side == "right"){
@@ -161,22 +161,5 @@ gen_data <- function(n_g, mu1_g, pi1_g,
     #   Sigma <- cov2cor(Sigma)
     # }
   }
-  return(list(zvals = zvals, groups = groups, H0 = H0, Sigma = Sigma))
+  return(list(zvals = zvals, groups = groups, H0 = H0, sqrtSigma = sqrtSigma))
 }
-
-
-mFDR <- function(c, n_g, pi0_g, mu1_g) {
-  V <- c()
-  R <- c()
-  for(i in 1:length(pi0_g)) {
-    pi0 = pi0_g[i]
-    mu1 = mu1_g[i]
-    n = n_g[i]
-    t = lfdr.inverse(c, pi0, mu1)
-    V[i] = n*pi0*t
-    R[i] = V[i] + n*(1-pi0)*nonnull.cdf(t, mu1)
-  }
-  return(sum(V)/sum(R))
-}
-
-
