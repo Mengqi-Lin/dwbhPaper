@@ -77,9 +77,9 @@ gen_methods_dwBH <- function(gamma,
   #   tmp <- paste0("BH_", weight_type)
   #   c(tmp, paste0(tmp, "_safe"))
   # })
-  tmp <- "BH_(trivial)"
-  BH_methods <- c(tmp, paste0(tmp, "_safe"))
-  methods <- c(as.character(BH_methods))
+  # tmp <- "BH_(trivial)"
+  # BH_methods <- c(tmp, paste0(tmp, "_safe"))
+  # methods <- c(as.character(BH_methods))
 
   dBH_methods <- apply(expr_params, 1, function(x){
     if (is.na(x[1])){
@@ -88,15 +88,12 @@ gen_methods_dwBH <- function(gamma,
       gamma <- x[1]
     }
     
-    weight_type <- paste0("(", x[2], ")")
-    
-    method1 <- paste0("dwBH_", weight_type,
-                      "_", gamma)
-    method2 <- paste0("dwBH_init_", weight_type,
-                      "_", gamma)
-    c(method1, method2)
+    method1 <- ifelse(x[2]=="trivial", paste0("BH_", gamma), paste0("wBH_(", x[2],")_", gamma))
+    method2 <- ifelse(x[2]=="trivial", paste0("dBH_", gamma), paste0("dwBH_(", x[2],")_", gamma))
+    method3 <- ifelse(x[2]=="trivial", paste0("dBH_init", gamma), paste0("dwBH_init_(", x[2],")_", gamma))
+    c(method1, method2, method3)
   })
-  methods <- c(methods, as.character(dBH_methods))
+  methods <- as.character(dBH_methods)
   if (!skip_dBH2){
     dBH2_methods <- apply(expr_params, 1, function(x){
       if (is.na(x[1])){

@@ -1,182 +1,115 @@
-dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g, 
-                             mu_size_type,
-                             rho, 
-                             Sigma_type,
-                             side,
-                             alphas, 
-                             nreps, 
-                             weight_type,
-                             gamma = 0.9,
-                             tautype = "QC",
-                             skip_dBH2 = TRUE,
-                             ...){
-  if (!(length(n_g) == length(mu1_g) & length(n_g) == length(pi1_g))){
-    stop("Each group should have its corresponding pi1 and mu1.")
-  }
-  n <- sum(n_g)
-  ngroups <- length(n_g)
-  groups <- c()
-  mu <- c()
-  for (j in 1: ngroups) {
-    mu <- c(mu, genmu(n_g[j], pi1 = pi1_g[j], mu1 = mu1_g[j], posit_type = "fix"))
-    groups <- c(groups, rep(j , n_g[j]))
-  }
-  # if (side == "right"){
-  #   mu <- abs(mu)
-  # } else if (side == "left"){
-  #   mu <- -abs(mu)
-  # }
-  H0 <- mu == 0
-  nalphas <- length(alphas)
-  Sigma <- genSigma(n, rho, Sigma_type)
-  eigSigma <- eigen(Sigma)
-  sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
-  
-  methods <- gen_methods_dwBH(gamma, weight_type, skip_dBH2 = F)
-  
-  expr_params <- expand.grid(
-    gamma = gamma,
-    weight_type = weight_type
+source("utils.R")
+source("dBH_utils.R")
+source("oracle_weights.R")
+source("dwBH_expr_functions.R")
+source("wBH_oracle_plots.R")
+library(EbayesThresh)
+
+alphas = c(0, 0.05, 0.1, 0.15, 0.2)
+skip_dBH2 = T
+
+## Different combinations of mu1 and pi1
+MU1 <- matrix(c(1, 2.5, 2, 2, 1, 3), 2)
+Pi1 <- matrix(c(0.1, 0.1, 0.01, 0.2, 0.01, 0.2), 2)
+
+set.seed(1)
+res <- lapply(1:3, function(i){
+  dwBH_mvgauss_groups_expr(
+    n_g = c(1000, 1000), 
+    mu1_g = MU1[, i], 
+    pi1_g = Pi1[, i], 
+    mu_type = 1,
+    posit_type = "fix",
+    rho = 0.8, 
+    Sigma_type = "AR",
+    side = "right",
+    alphas = alphas, 
+    nreps = 1000, 
+    weight_type = c("trivial", "optimal"),
+    gamma = c(1, NA),
+    tautype = "QC",
+    skip_dBH2 = skip_dBH2
   )
-  
-  results <- lapply(1:nalphas, function(k){
-    tmp <- matrix(NA, length(methods), nreps)
-    rownames(tmp) <- methods
-    return(list(alpha = alphas[k],
-                FDP = tmp,
-                power = tmp,
-                secBH = tmp))
-  })
-  
+})
 
-  optimal_weights <- lapply(1:nalphas, function(k){
-    lapply(1:nrow(expr_params), function(j){
-      gam <- expr_params[j, "gamma"]
-      gam <- ifelse(is.na(gam), 1/normalize(1:n), gam)
-      oracle.weights(alpha = alphas[k]*gam, n_g = n_g, pi0_g = 1-pi1_g, mu1_g = mu1_g, pi0Est = T)
-    })
-  })
+postres <- lapply(res, function(i){
+  wBH_postprocess(i)
+})
+dwBH_posetres <- lapply(res, postprocess)
 
-  pi1 <- sum(n_g*pi1_g)/n
-  GBH_weights <- lapply(1:nalphas, function(k){
-    rep(pi1_g/(1-pi1_g)/pi1, n_g)
-  })
-  
-  pb <- txtProgressBar(style=3)
-  for (i in 1:nreps){
-    zvals <- as.numeric(mu + sqrtSigma %*% rnorm(n))
-    pvals <- zvals_pvals(zvals, side)
-    for (k in 1:nalphas){
-      obj <- list()
-      alpha <- alphas[k]
-      
-      ## BH rejections
-      avals <- 1:n
-      rejs_BH <- BH(pvals, alpha, avals, FALSE)
-      rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
-      obj <- c(obj, list(rejs_BH, rejs_BH_safe))
+filename <- "../data/dwBH_mvgauss_AR0.8.RData"
+save(res, file = filename)
 
-      # ## BC rejections
-      # rejs_BC <- BC(pvals, alpha)
-      # obj <- c(obj, list(rejs_BC))
-      
-      # ## Number of methods so far
-      # nBHBC <- length(obj)
-      
-      ## dwBH rejections and wBH rejections
+cols <- c('black', 'black','orange', 'orange', 'blue', 'blue')
+ltys <- c(1,2,1,2)
+pchs <- c(1,2,1,2) 
 
-      for (j in 1:nrow(expr_params)){
-        fac <- expr_params[j, 1]
-        weight_type <- expr_params[j, 2]
-        
-        avals_type <- "BH"
-        avals <- 1:n
-        #qvals <- qvals_BH_reshape(pvals, avals)
-        if (is.na(fac)){
-          gamma <- NULL
-        } else {
-          gamma <- fac
-        }
-        
-        weights <- switch(weight_type, 
-                          "GBH" = GBH_weights[[k]],
-                          "optimal" = optimal_weights[[k]][[j]])
-        
-        rejs_dBH <- dBH_mvgauss(
-          zvals = zvals,
-          Sigma = Sigma,
-          side = side,
-          alpha = alpha,
-          gamma = gamma, 
-          niter = 1,
-          tautype = "QC",
-          weights = weights, 
-          avals_type = avals_type)
-        # rejs_dBH$maxq <- ifelse(
-        #   length(rejs_dBH$initrejs) == 0, NA,
-        #   max(qvals[rejs_dBH$initrejs] / alpha))
-        rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
-        obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
-      }
-      
-      if (!skip_dBH2){
-        ## dBH2 rejections
-        for (j in 1:nrow(expr_params)){
-          fac <- expr_params[j, 1]
-          weight_type  <- expr_params[j, 2]
-          avals_type <- "BH"
-          avals <- 1:n
+methods <- gen_methods_dwBH(gamma = c(1, NA), weight_type = c("trivial", "optimal"), skip_dBH2 = T)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2), oma=c(0, 0, 0, 5), cex.axis = 1.7, cex.main = 1.7, cex.lab = 1.7)
+BY_ind <- grep("safe", methods)
+BH_ind <- grep(1, methods)
+init_ind <- grep("init", methods)
+BH_final_ind <- setdiff(BH_ind, init_ind)
+BY_final_ind <- setdiff(BY_ind, init_ind)
+## FDR plots
+FDR.filename <- "../figs/dwBH_FDR_AR0.8_gaussian.pdf"
+pdf(FDR.filename, width = 21, height = 7)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2))
+lapply(1:3, function(i){
+  plot_results(postres[[i]]$FDR[BH_final_ind,], methods[BH_final_ind], 
+               title = bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i])),
+               cols = cols, ltys = ltys, pchs = pchs, lwd = 2.2,
+               ylim = c(0, 0.25), ylab = "FDR",
+               legend = T, cex.legend = 3,
+               alphas = alphas)
+  abline(a = 0, b=1, col = "red")
+})
+dev.off()
 
-          qvals <- qvals_BH_reshape(pvals, avals)
-          if (is.na(fac)){
-            gamma <- NULL
-          } else {
-            gamma <- fac
-          }
-          rejs_dBH2 <- dBH_mvgauss(
-            zvals = zvals,
-            Sigma = Sigma,
-            side = side,
-            alpha = alpha,
-            gamma = gamma, 
-            covariates = groups,
-            niter = 2,
-            tautype = type,
-            weight_type = weight_type,
-            pi0_oracle = 1-pi1_g,
-            mu1_oracle = mu1_g,
-            avals_type = avals_type,
-             ...)
-          rejs_dBH2$maxq <- ifelse(
-            length(rejs_dBH2$initrejs) == 0, NA,
-            max(qvals[rejs_dBH2$initrejs] / alpha))
-          rejs_dBH2_init <- list(rejs = rejs_dBH2$initrejs)
-          obj <- c(obj, list(rejs_dBH2, rejs_dBH2_init))
-        }
-      }
-      
-      res <- sapply(obj, function(output){
-        FDPpower(output$rejs, H0)
-      })
-      results[[k]]$FDP[, i] <- as.numeric(res[1, ])
-      results[[k]]$power[, i] <- as.numeric(res[2, ])
-      inds <- seq(1, length(obj), 3)
-      results[[k]]$secBH[inds, i] <- sapply(obj[inds], function(output){
-        output$secBH
-      })
-      # results[[k]]$sumWeights[inds, i] <- sapply(obj[inds], function(output){
-      #   output$sumWeights
-      # })
-      # results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
-      #   output$maxq
-      # })
-      setTxtProgressBar(pb, ((i-1)*nalphas + k)/(nreps*nalphas))
-    }
-  }
-  
-  close(pb)
-  return(results)
-}
+FDR.filename <- "../figs/dwBH_power_AR0.8_gaussian.pdf"
+pdf(FDR.filename, width = 21, height = 7)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2))
+## power plots
+lapply(1:3, function(i){
+  plot_results(postres[[i]]$power[BH_final_ind,], 
+               methods[BH_final_ind], 
+               title = bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i])),
+               cols = cols, ltys = ltys, pchs = pchs, lwd = 2.2,
+               ylim = c(0,1), ylab = "power",
+               legend = T, cex.legend = 1.1,
+               alphas = alphas)
+})
+dev.off()
 
+
+## FDR plots
+FDR.filename <- "../figs/dwBY_FDR_AR0.8_gaussian.pdf"
+pdf(FDR.filename, width = 21, height = 7)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2))
+lapply(1:3, function(i){
+  plot_results(postres[[i]]$FDR[BY_final_ind,], methods[BY_final_ind], 
+               title = bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i])),
+               cols = cols, ltys = ltys, pchs = pchs, lwd = 2.2,
+               ylim = c(0, 0.25), ylab ="FDR",
+               legend = T, cex.legend = 3,
+               alphas = alphas)
+  abline(a=0, b= 1, col = "red")
+})
+dev.off()
+
+FDR.filename <- "../figs/dwBY_power_AR0.8_gaussian.pdf"
+pdf(FDR.filename, width = 21, height = 7)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2))
+## power plots
+lapply(1:3, function(i){
+  plot_results(postres[[i]]$power[BY_final_ind,], 
+               methods[BY_final_ind], 
+               title = bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i])),
+               cols = cols, ltys = ltys, pchs = pchs, lwd = 2.2,
+               ylim = c(0,1), ylab = "power",
+               legend = T, cex.legend = 3,
+               alphas = alphas)
+})
+dev.off()
 
 

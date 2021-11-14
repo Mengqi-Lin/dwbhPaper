@@ -9,8 +9,7 @@ wBH_mvgauss_groups_expr <- function(n_g,
                                     alphas = c(0.05, 0.1, 0.15, 0.2), 
                                     nreps, 
                                     weight_type, 
-                                    pi0Est,
-                                    side){
+                                    pi0Est){
   if (!(length(n_g) == length(mu1_g) & length(n_g) == length(pi1_g))){
     stop("Each group should have its corresponding pi1 and mu1.")
   }
@@ -197,26 +196,5 @@ wBH_postprocess <- function(res){
   # rownames(FDR) <- methods
   # rownames(power) <- methods
   return(list(FDR = FDR, power = power))
-}
-
-gen_methods.wBH <- function(weight_type, skip_BY){
-  expr_params <- expand.grid(
-    weight_type = weight_type
-  )
-  methods <- c()
-  wBH_methods <- apply(expr_params, 1, function(x){
-    weight_type <- x[1]
-    method1 <- paste0("wBH_(", weight_type,
-                      ")")
-    if (!skip_BY) {
-      method2 <- paste0("wBY_(", weight_type,
-                        ")")
-    } else {
-      method2 <- NULL
-    }
-    c(method1, method2)
-  })
-  methods <- c(as.character(wBH_methods))
-  return(methods)
 }
 
