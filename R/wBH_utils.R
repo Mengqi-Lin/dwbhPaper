@@ -60,20 +60,15 @@ genmu <- function(n, pi1, mu1,
 
 gen_methods <- function(gamma,
                         weight_type,
-                        MC_type,
+                        MC,
                         skip_dBH2){
   expr_params <- expand.grid(
     gamma = gamma,
     weight_type = weight_type,
-    MC_type = MC_type
+    MC = MC
   )
   
-  # BH_methods <- sapply(weight_type, function(x){
-  #   weight_type <- paste0("weighting(", x, ")")
-  #   tmp <- paste0("BH_", weight_type)
-  #   c(tmp, paste0(tmp, "_safe"))
-  # })
-  methods <- c()
+  methods <- c("BH", "BY")
 
   dBH_methods <- apply(expr_params, 1, function(x){
     if (is.na(x[1])){
@@ -84,18 +79,15 @@ gen_methods <- function(gamma,
     
     weight_type <- paste0("weighting(", x[2], ")")
 
-    MC_type <- x[3]
+    MC <- x[3]
     
     method1 <- paste0("dwBH_", weight_type,
-                      "_", MC_type,
+                      "_", MC,
                       "_", gamma)
     method2 <- paste0("dwBH_init_", weight_type,
-                      "_", MC_type,
+                      "_", MC,
                       "_", gamma)
-    method3 <- paste0("wBH_", weight_type,
-                      "_", MC_type,
-                      "_", gamma)
-    c(method1, method2, method3)
+    c(method1, method2)
   })
   methods <- c(methods, as.character(dBH_methods))
   if (!skip_dBH2){
@@ -109,10 +101,10 @@ gen_methods <- function(gamma,
       tautype <- x[3]
       
       method1 <- paste0("dwBH2_", weight_type,
-                        "_", MC_type,
+                        "_", MC,
                         "_", gamma)
       method2 <- paste0("dwBH2_init_", weight_type,
-                        "_", MC_type,
+                        "_", MC,
                         "_", gamma)
       c(method1, method2)
     })
@@ -125,7 +117,7 @@ gen_methods <- function(gamma,
 gen_data <- function(n_g, mu1_g, pi1_g, 
                      rho, Sigma_type,
                      side, 
-                    nreps){
+                     nreps){
   n <- sum(n_g)
   ngroups <- length(n_g)
   if (!(length(n_g) == length(mu1_g) & length(n_g) == length(pi1_g))){
@@ -135,9 +127,8 @@ gen_data <- function(n_g, mu1_g, pi1_g,
   if(Sigma_type == "iid") {
     sqrtSigma <- Sigma
   } else {
-    stop("not idd")
-    # eigSigma <- eigen(Sigma)
-    # sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
+    eigSigma <- eigen(Sigma)
+    sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
   }
   
   mu <- c()
@@ -163,20 +154,4 @@ gen_data <- function(n_g, mu1_g, pi1_g,
   }
   return(list(zvals = zvals, groups = groups, H0 = H0, Sigma = Sigma))
 }
-
-
-mFDR <- function(c, n_g, pi0_g, mu1_g) {
-  V <- c()
-  R <- c()
-  for(i in 1:length(pi0_g)) {
-    pi0 = pi0_g[i]
-    mu1 = mu1_g[i]
-    n = n_g[i]
-    t = lfdr.inverse(c, pi0, mu1)
-    V[i] = n*pi0*t
-    R[i] = V[i] + n*(1-pi0)*nonnull.cdf(t, mu1)
-  }
-  return(sum(V)/sum(R))
-}
-
 

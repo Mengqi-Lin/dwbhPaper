@@ -28,11 +28,6 @@ plot_results <- function(vals, methods, title,
 }
 
 
-result <- list()
-result[[1]] <- wBHpostres7
-result[[2]] <- wBHpostres9
-result[[3]] <- wBHpostres10
-
 ## Plots for simulation 1
 methods <- unique(methods1)
 ## Blue for non-adaptive BH-type methods: BH, Storey, BC; Orange for IHW; Black for SABHA; Red for AdaPT

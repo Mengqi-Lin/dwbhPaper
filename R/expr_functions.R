@@ -56,49 +56,33 @@ genmu <- function(n, pi1, mu1,
 }
 
 gen_methods <- function(gamma,
-                        geom_fac,
-                        tautype,
-                        skip_knockoff,
+                        weight_type,
+                        MC,
                         skip_dBH2){
     expr_params <- expand.grid(
         gamma = gamma,
-        geom_fac = geom_fac,
-        tautype = tautype
+        weight_type = weight_type,
+        MC = MC
     )
-
-    BH_methods <- sapply(union(NA, geom_fac), function(x){
-        if (is.na(x)){
-            geom_fac <- "full"
-        } else {
-            geom_fac <- paste0("sparse(", x, ")")
-        }
-        tmp <- paste0("BH_", geom_fac)
-        c(tmp, paste0(tmp, "_safe"))
-    })
-    methods <- c(BH_methods, "BC")
-    if (!skip_knockoff){
-        methods <- c(methods,
-                     "Knockoff_equi",
-                     "Knockoff_sdp")
-    }
+    
+    methods <- c("BH", "BY")
+    
     dBH_methods <- apply(expr_params, 1, function(x){
         if (is.na(x[1])){
             gamma <- "safe"
         } else {
             gamma <- x[1]
         }
-        if (is.na(x[2])){
-            geom_fac <- "full"
-        } else {
-            geom_fac <- paste0("sparse(", as.numeric(x[2]), ")")
-        }
-        tautype <- x[3]
         
-        method1 <- paste0("dBH_", tautype,
-                          "_", geom_fac,
+        weight_type <- paste0("weighting(", x[2], ")")
+        
+        MC <- x[3]
+        
+        method1 <- paste0("dwBH_", weight_type,
+                          "_", MC,
                           "_", gamma)
-        method2 <- paste0("dBH_init_", tautype,
-                          "_", geom_fac,
+        method2 <- paste0("dwBH_init_", weight_type,
+                          "_", MC,
                           "_", gamma)
         c(method1, method2)
     })
@@ -110,18 +94,14 @@ gen_methods <- function(gamma,
             } else {
                 gamma <- x[1]
             }
-            if (is.na(x[2])){
-                geom_fac <- "full"
-            } else {
-                geom_fac <- paste0("sparse(", as.numeric(x[2]), ")")
-            }
+            weight_type <- paste0("weighting(", x[2], ")")
             tautype <- x[3]
             
-            method1 <- paste0("dBH2_", tautype,
-                              "_", geom_fac,
+            method1 <- paste0("dwBH2_", weight_type,
+                              "_", MC,
                               "_", gamma)
-            method2 <- paste0("dBH2_init_", tautype,
-                              "_", geom_fac,
+            method2 <- paste0("dwBH2_init_", weight_type,
+                              "_", MC,
                               "_", gamma)
             c(method1, method2)
         })
@@ -131,87 +111,80 @@ gen_methods <- function(gamma,
     return(methods)
 }
 
-dBH_mvgauss_expr <- function(n, mu1, pi1,
-                             mu_posit_type, mu_size_type,
-                             rho, Sigma_type,
-                             side,
-                             alphas, nreps,
-                             gamma = 0.9,
-                             geom_fac = 2,
-                             tautype = "QC",
-                             skip_dBH2 = TRUE,
-                             ...){
-    Sigma <- genSigma(n, rho, Sigma_type)
-
+dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g, 
+                                     rho, Sigma_type,
+                                     side,
+                                     alphas, nreps, weight_type,
+                                     MC,
+                                     gamma = 0.9,
+                                     tautype = "QC",
+                                     skip_dBH2 = TRUE,
+                                     ...){
+    if (!(length(n_g) == length(mu1_g) & length(n_g) == length(pi1_g))){
+        stop("Each group should have its corresponding pi1 and mu1.")
+    }
+    n <- sum(n_g)
+    ngroups <- length(n_g)
+    groups <- c()
+    mu <- c()
+    for (j in 1: ngroups) {
+        mu <- c(mu, genmu(n_g[j], pi1 = pi1_g[j], mu1 = mu1_g[j]))
+        groups <- c(groups, rep(j , n_g[j]))
+    }
+    # if (side == "right"){
+    #   mu <- abs(mu)
+    # } else if (side == "left"){
+    #   mu <- -abs(mu)
+    # }
+    H0 <- mu == 0
     nalphas <- length(alphas)
+    Sigma <- genSigma(n, rho, Sigma_type)
     eigSigma <- eigen(Sigma)
     sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
-
-    methods <- gen_methods(gamma, geom_fac, tautype,
-                           TRUE, skip_dBH2)
+    
+    methods <- gen_methods(gamma, weight_type, MC,
+                           skip_dBH2 = T)
+    
     expr_params <- expand.grid(
         gamma = gamma,
-        geom_fac = geom_fac,
-        tautype = tautype
+        weight_type = weight_type,
+        MC = MC
     )
-
+    
     results <- lapply(1:nalphas, function(k){
         tmp <- matrix(NA, length(methods), nreps)
         rownames(tmp) <- methods
         return(list(alpha = alphas[k],
                     FDP = tmp,
                     power = tmp,
-                    secBH = tmp,
-                    qcap = tmp))
+                    secBH = tmp))
     })
-
+    
     pb <- txtProgressBar(style=3)
     for (i in 1:nreps){
-        mu <- genmu(n, pi1, mu1, mu_posit_type, mu_size_type)
-        if (side == "right"){
-            mu <- abs(mu)
-        } else if (side == "left"){
-            mu <- -abs(mu)
-        }
-        H0 <- mu == 0
         zvals <- as.numeric(mu + sqrtSigma %*% rnorm(n))
-        pvals <- pvals_mvgauss(zvals, Sigma, side)
-        
+        pvals <- zvals_pvals(zvals, side)
         for (k in 1:nalphas){
             obj <- list()
             alpha <- alphas[k]
-            
+            avals <- 1:n
             ## BH rejections
-            for (x in union(NA, geom_fac)){
-                if (is.na(x)){
-                    avals <- 1:n
-                } else {
-                    avals <- geom_avals(x, n)
-                }
-                rejs_BH <- BH(pvals, alpha, avals, FALSE)
-                rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
-                obj <- c(obj, list(rejs_BH, rejs_BH_safe))
-            }
-
-            ## BC rejections
-            rejs_BC <- BC(pvals, alpha)
-            obj <- c(obj, list(rejs_BC))
-
+            
+            rejs_BH <- BH(pvals, alpha, avals, FALSE)
+            rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
+            obj <- c(obj, list(rejs_BH, rejs_BH_safe))
+            
             ## Number of methods so far
-            nBHBC <- length(obj)
-
-            ## dBH rejections
+            nBH <- length(obj)
+            
             for (j in 1:nrow(expr_params)){
                 fac <- expr_params[j, 1]
-                x <- expr_params[j, 2]
-                type <- expr_params[j, 3]
-                if (is.na(x)){
-                    avals_type <- "BH"
-                    avals <- 1:n
-                } else {
-                    avals_type <- "geom"
-                    avals <- geom_avals(x, n)
-                }
+                weight_type <- expr_params[j, 2]
+                MC <- expr_params[j, 3]
+                
+                
+                avals_type <- "BH"
+                avals <- 1:n
                 qvals <- qvals_BH_reshape(pvals, avals)
                 if (is.na(fac)){
                     gamma <- NULL
@@ -224,30 +197,28 @@ dBH_mvgauss_expr <- function(n, mu1, pi1,
                     side = side,
                     alpha = alpha,
                     gamma = gamma, 
+                    covariates = groups,
                     niter = 1,
-                    tautype = type,
-                    avals_type = avals_type,
-                    geom_fac = x, ...)
-                rejs_dBH$maxq <- ifelse(
-                    length(rejs_dBH$initrejs) == 0, NA,
-                    max(qvals[rejs_dBH$initrejs] / alpha))
+                    tautype = "QC",
+                    weight_type = weight_type,
+                    MC = MC,
+                    avals_type = avals_type)
+                # rejs_dBH$maxq <- ifelse(
+                #   length(rejs_dBH$initrejs) == 0, NA,
+                #   max(qvals[rejs_dBH$initrejs] / alpha))
                 rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
                 obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
             }
-
+            
             if (!skip_dBH2){
                 ## dBH2 rejections
                 for (j in 1:nrow(expr_params)){
                     fac <- expr_params[j, 1]
-                    x <- expr_params[j, 2]
+                    weight_type  <- expr_params[j, 2]
                     type <- expr_params[j, 3]
-                    if (is.na(x)){
-                        avals_type <- "BH"
-                        avals <- 1:n
-                    } else {
-                        avals_type <- "geom"
-                        avals <- geom_avals(x, n)
-                    }
+                    avals_type <- "BH"
+                    avals <- 1:n
+                    
                     qvals <- qvals_BH_reshape(pvals, avals)
                     if (is.na(fac)){
                         gamma <- NULL
@@ -260,10 +231,12 @@ dBH_mvgauss_expr <- function(n, mu1, pi1,
                         side = side,
                         alpha = alpha,
                         gamma = gamma, 
+                        covariates = groups,
                         niter = 2,
                         tautype = type,
+                        weight_type = weight_type,
                         avals_type = avals_type,
-                        geom_fac = x, ...)
+                        ...)
                     rejs_dBH2$maxq <- ifelse(
                         length(rejs_dBH2$initrejs) == 0, NA,
                         max(qvals[rejs_dBH2$initrejs] / alpha))
@@ -271,23 +244,23 @@ dBH_mvgauss_expr <- function(n, mu1, pi1,
                     obj <- c(obj, list(rejs_dBH2, rejs_dBH2_init))
                 }
             }
-
+            
             res <- sapply(obj, function(output){
                 FDPpower(output$rejs, H0)
             })
             results[[k]]$FDP[, i] <- as.numeric(res[1, ])
             results[[k]]$power[, i] <- as.numeric(res[2, ])
-            inds <- seq(nBHBC + 1, length(methods), 2)
+            inds <- seq(nBH + 1, length(methods), 2)
             results[[k]]$secBH[inds, i] <- sapply(obj[inds], function(output){
                 output$secBH
             })
-            results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
-                output$maxq
-            })
+            # results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
+            #   output$maxq
+            # })
             setTxtProgressBar(pb, ((i-1)*nalphas + k)/(nreps*nalphas))
         }
     }
-
+    
     close(pb)
     return(results)
 }
@@ -456,376 +429,6 @@ dBH_mvt_expr <- function(n, df, mu1, pi1,
     return(results)
 }
 
-dBH_lm_expr <- function(X, mu1, pi1,
-                        mu_posit_type, mu_size_type,
-                        side,
-                        alphas, nreps,
-                        gamma = 0.9,
-                        geom_fac = 2,
-                        tautype = "QC",
-                        skip_knockoff = TRUE,
-                        skip_dBH2 = TRUE,
-                        ...){
-    nalphas <- length(alphas)    
-    n <- nrow(X)
-    p <- ncol(X)
-    if (n < 2 * p){
-        skip_knockoff <- TRUE
-    }
-    if (!skip_knockoff){
-        Xk_equi <- knockoff::create.fixed(X, "equi")$Xk
-        Xk_sdp <- knockoff::create.fixed(X, "sdp")$Xk
-    }
-
-    Sigma <- solve(t(X) %*% X)
-    H <- X %*% Sigma %*% t(X)
-    df <- n - p
-
-    methods <- gen_methods(gamma, geom_fac, tautype,
-                           skip_knockoff, skip_dBH2)
-    expr_params <- expand.grid(
-        gamma = gamma,
-        geom_fac = geom_fac,
-        tautype = tautype
-    )
-
-    results <- lapply(1:nalphas, function(k){
-        tmp <- matrix(NA, length(methods), nreps)
-        rownames(tmp) <- methods
-        return(list(alpha = alphas[k],
-                    FDP = tmp,
-                    power = tmp,
-                    secBH = tmp,
-                    qcap = tmp))
-    })
-
-    pb <- txtProgressBar(style=3)
-    for (i in 1:nreps){
-        mu <- genmu(p, pi1, 1, mu_posit_type, mu_size_type)
-        if (side == "right"){
-            mu <- abs(mu)
-        } else if (side == "left"){
-            mu <- -abs(mu)
-        }
-        mu <- mu * mu1
-        H0 <- mu == 0
-
-        eps <- rnorm(n)
-        y <- X %*% mu + eps
-        zvals <- Sigma %*% (t(X) %*% y)
-        tmp <- as.numeric(t(y) %*% H %*% y)
-        sigmahat <- sqrt((sum(y^2) - tmp) / df)
-        tvals <- zvals / sigmahat
-        pvals <- pvals_mvt(tvals, Sigma, df, side)
-
-        for (k in 1:nalphas){
-            obj <- list()
-            alpha <- alphas[k]            
-
-            ## BH rejections
-            for (x in union(NA, geom_fac)){
-                if (is.na(x)){
-                    avals <- 1:p
-                } else {
-                    avals <- geom_avals(x, p)
-                }
-                rejs_BH <- BH(pvals, alpha, avals, FALSE)
-                rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
-                obj <- c(obj, list(rejs_BH, rejs_BH_safe))
-            }
-
-            ## BC rejections
-            rejs_BC <- BC(pvals, alpha)
-            obj <- c(obj, list(rejs_BC))
-
-            ## Knockoff rejections
-            if (!skip_knockoff) {        
-                rejs_knockoff_equi <- knockoff_lm(X, Xk_equi, y, alpha)
-                rejs_knockoff_sdp <- knockoff_lm(X, Xk_sdp, y, alpha)
-                obj <- c(obj, list(rejs_knockoff_equi, rejs_knockoff_sdp))
-            }
-            
-            ## Number of methods so far
-            nBHBCkn <- length(obj)
-
-            ## dBH rejections
-            for (j in 1:nrow(expr_params)){
-                fac <- expr_params[j, 1]
-                x <- expr_params[j, 2]
-                type <- expr_params[j, 3]
-                if (is.na(x)){
-                    avals_type <- "BH"
-                    avals <- 1:p                    
-                } else {
-                    avals_type <- "geom"
-                    avals <- geom_avals(x, p)
-                }
-                qvals <- qvals_BH_reshape(pvals, avals)
-                if (is.na(fac)){
-                    gamma <- NULL
-                } else {
-                    gamma <- fac
-                }
-                rejs_dBH <- dBH_mvt(
-                    tvals = tvals,
-                    df = df,
-                    Sigma = Sigma,
-                    side = side,
-                    alpha = alpha,
-                    gamma = gamma, 
-                    niter = 1,
-                    tautype = type,
-                    avals_type = avals_type,
-                    geom_fac = x, ...)
-                rejs_dBH$maxq <- ifelse(
-                    length(rejs_dBH$initrejs) == 0, NA,
-                    max(qvals[rejs_dBH$initrejs] / alpha))
-                rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
-                obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
-            }
-
-            if (!skip_dBH2){
-                ## dBH2 rejections
-                for (j in 1:nrow(expr_params)){
-                    fac <- expr_params[j, 1]
-                    x <- expr_params[j, 2]
-                    type <- expr_params[j, 3]
-                    if (is.na(x)){
-                        avals_type <- "BH"
-                        avals <- 1:p                        
-                    } else {
-                        avals_type <- "geom"
-                        avals <- geom_avals(x, p)
-                    }
-                    qvals <- qvals_BH_reshape(pvals, avals)
-                    if (is.na(fac)){
-                        gamma <- NULL
-                    } else {
-                        gamma <- fac
-                    }
-                    rejs_dBH2 <- dBH_mvt(
-                        tvals = tvals,
-                        df = df,
-                        Sigma = Sigma,
-                        side = side,
-                        alpha = alpha,
-                        gamma = gamma,
-                        niter = 2,
-                        tautype = type,
-                        avals_type = avals_type,
-                        geom_fac = x, ...)
-                    rejs_dBH2$maxq <- ifelse(
-                        length(rejs_dBH2$initrejs) == 0, NA,
-                        max(qvals[rejs_dBH2$initrejs] / alpha))
-                    rejs_dBH2_init <- list(rejs = rejs_dBH2$initrejs)
-                    obj <- c(obj, list(rejs_dBH2, rejs_dBH2_init))
-                }
-            }
-
-            res <- sapply(obj, function(output){
-                FDPpower(output$rejs, H0)
-            })
-            results[[k]]$FDP[, i] <- as.numeric(res[1, ])
-            results[[k]]$power[, i] <- as.numeric(res[2, ])
-            inds <- seq(nBHBCkn + 1, length(methods), 2)
-            results[[k]]$secBH[inds, i] <- sapply(obj[inds], function(output){
-                output$secBH
-            })
-            results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
-                output$maxq
-            })
-            setTxtProgressBar(pb, ((i-1)*nalphas + k)/(nreps*nalphas))
-        }
-    }
-
-    close(pb)
-    return(results)
-}
-
-dBH_mcc_expr <- function(ng, nr,
-                         mu1, pi1,
-                         mu_posit_type, mu_size_type,
-                         side,
-                         alphas, nreps,
-                         gamma = 0.9,
-                         geom_fac = 2,
-                         tautype = "QC",
-                         skip_knockoff = TRUE,
-                         skip_dBH2 = TRUE,
-                         ...){
-    df <- (ng + 1) * (nr - 1)
-    Sigma <- (diag(1, ng) + 1) / 2
-    
-    X <- lapply(1:nr, function(i){
-      	rbind(diag(rep(1, ng)), rep(0, ng))
-    })
-    X <- do.call(rbind, X)
-    X <- scale(X, scale = FALSE)
-    nalphas <- length(alphas)
-    if (!skip_knockoff){
-        Xk_equi <- create_fixed(X, "equi", intercept = TRUE)$Xk
-        Xk_sdp <- create_fixed(X, "sdp", intercept = TRUE)$Xk
-    }
-
-    methods <- gen_methods(gamma, geom_fac, tautype,
-                           skip_knockoff, skip_dBH2)
-    expr_params <- expand.grid(
-        gamma = gamma,
-        geom_fac = geom_fac,
-        tautype = tautype
-    )
-
-    results <- lapply(1:nalphas, function(k){
-        tmp <- matrix(NA, length(methods), nreps)
-        rownames(tmp) <- methods
-        return(list(alpha = alphas[k],
-                    FDP = tmp,
-                    power = tmp,
-                    secBH = tmp,
-                    qcap = tmp))
-    })
-
-    pb <- txtProgressBar(style=3)
-    for (i in 1:nreps){
-        mu <- genmu(ng, pi1, 1, "fix", mu_size_type) * mu1
-        if (side == "right"){
-            mu <- abs(mu)
-        } else if (side == "left"){
-            mu <- -abs(mu)
-        }
-        H0 <- mu == 0
-        y <- matrix(rnorm((ng + 1) * nr), nrow = ng + 1) + c(mu, 0)
-        zvals <- rowMeans(y)
-        sigmahat <- sqrt(mean(rowMeans(y^2) - zvals^2) * nr / (nr - 1))
-        zvals <- head(zvals, -1) - tail(zvals, 1)
-        zvals <- zvals * sqrt(nr / 2)
-        tvals <- zvals / sigmahat
-        pvals <- pvals_mvt(tvals, Sigma, df, side)
-
-        for (k in 1:nalphas){
-            obj <- list()
-            alpha <- alphas[k]            
-
-            ## BH rejections
-            for (x in union(NA, geom_fac)){
-                if (is.na(x)){
-                    avals <- 1:ng
-                } else {
-                    avals <- geom_avals(x, ng)
-                }
-                rejs_BH <- BH(pvals, alpha, avals, FALSE)
-                rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
-                obj <- c(obj, list(rejs_BH, rejs_BH_safe))
-            }
-
-            ## BC rejections
-            rejs_BC <- BC(pvals, alpha)
-            obj <- c(obj, list(rejs_BC))
-
-            ## Knockoff rejections
-            if (!skip_knockoff) {
-                y <- as.numeric(y)
-                rejs_knockoff_equi <- knockoff_lm(X, Xk_equi, y, alpha)
-                rejs_knockoff_sdp <- knockoff_lm(X, Xk_sdp, y, alpha)
-                obj <- c(obj, list(rejs_knockoff_equi, rejs_knockoff_sdp))
-            }
-            
-            ## Number of methods so far
-            nBHBCkn <- length(obj)
-            
-            ## dBH rejections
-            for (j in 1:nrow(expr_params)){
-                fac <- expr_params[j, 1]
-                x <- expr_params[j, 2]
-                type <- expr_params[j, 3]
-                if (is.na(x)){
-                    avals_type <- "BH"
-                    avals <- 1:ng
-                } else {
-                    avals_type <- "geom"
-                    avals <- geom_avals(x, ng)
-                }
-                qvals <- qvals_BH_reshape(pvals, avals)
-                if (is.na(fac)){
-                    gamma <- NULL
-                } else {
-                    gamma <- fac
-                }
-                rejs_dBH <- dBH_mvt(
-                    tvals = tvals,
-                    df = df,
-                    Sigma = Sigma,
-                    side = side,
-                    alpha = alpha,
-                    gamma = gamma, 
-                    niter = 1,
-                    tautype = type,
-                    avals_type = avals_type,
-                    geom_fac = x, ...)
-                rejs_dBH$maxq <- ifelse(
-                    length(rejs_dBH$initrejs) == 0, NA,
-                    max(qvals[rejs_dBH$initrejs] / alpha))
-                rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
-                obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
-            }
-
-            if (!skip_dBH2){
-                ## dBH2 rejections
-                for (j in 1:nrow(expr_params)){
-                    fac <- expr_params[j, 1]
-                    x <- expr_params[j, 2]
-                    type <- expr_params[j, 3]
-                    if (is.na(x)){
-                        avals_type <- "BH"
-                        avals <- 1:ng
-                    } else {
-                        avals_type <- "geom"
-                        avals <- geom_avals(x, ng)
-                    }
-                    qvals <- qvals_BH_reshape(pvals, avals)
-                    if (is.na(fac)){
-                        gamma <- NULL
-                    } else {
-                        gamma <- fac
-                    }
-                    rejs_dBH2 <- dBH_mvt(
-                        tvals = tvals,
-                        df = df,
-                        Sigma = Sigma,
-                        side = side,
-                        alpha = alpha,
-                        gamma = gamma,
-                        niter = 2,
-                        tautype = type,
-                        avals_type = avals_type,
-                        geom_fac = x, ...)
-                    rejs_dBH2$maxq <- ifelse(
-                        length(rejs_dBH2$initrejs) == 0, NA,
-                        max(qvals[rejs_dBH2$initrejs] / alpha))
-                    rejs_dBH2_init <- list(rejs = rejs_dBH2$initrejs)
-                    obj <- c(obj, list(rejs_dBH2, rejs_dBH2_init))
-                }
-            }
-
-            res <- sapply(obj, function(output){
-                FDPpower(output$rejs, H0)
-            })
-            results[[k]]$FDP[, i] <- as.numeric(res[1, ])
-            results[[k]]$power[, i] <- as.numeric(res[2, ])
-            inds <- seq(nBHBCkn + 1, length(methods), 2)
-            results[[k]]$secBH[inds, i] <- sapply(obj[inds], function(output){
-                output$secBH
-            })
-            results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
-                output$maxq
-            })
-            setTxtProgressBar(pb, ((i-1)*nalphas + k)/(nreps*nalphas))
-        }
-    }
-
-    close(pb)
-    return(results)
-}
 
 postprocess <- function(res){
     summaryres <- lapply(res, function(re){
@@ -833,29 +436,17 @@ postprocess <- function(res){
         FDR <- round(FDR, 4)
         power <- as.numeric(rowMeans(re$power))
         secBH <- as.numeric(rowMeans(re$secBH))
-        qmax <- as.numeric(apply(re$qcap, 1, function(x){
-            max(x, na.rm = TRUE)
-        }))
-        q99 <- as.numeric(apply(re$qcap, 1, function(x){
-            quantile(x, 0.99, na.rm = TRUE)
-        }))
-        q95 <- as.numeric(apply(re$qcap, 1, function(x){
-            quantile(x, 0.95, na.rm = TRUE)
-        }))
+        
         methods <- rownames(re$power)
         df <- data.frame(method = methods,
                          FDR = FDR,
                          power = power,
                          secBH = secBH)
-        df_q <- data.frame(qmax = qmax,
-                           q99 = q99,
-                           q95 = q95)
+        
         inds1 <- grep("^BH", methods)
-        inds2 <- grep("^BC", methods)
-        inds3 <- grep("^Knockoff", methods)
-        inds <- c(inds1, inds2, inds3)
+        inds2 <- grep("^BY", methods)
+        inds <- c(inds1, inds2)
         df1 <- df[inds, ]
-        df1_q <- df_q[inds, ]
         df1[, 5:6] <- NA
         names(df1)[5:6] <- c("FDR (init)", "power (init)")
         df2 <- df[-inds, ]
@@ -864,18 +455,14 @@ postprocess <- function(res){
         df2_2 <- df2[seq(2, m, 2), ][, 2:3]
         names(df2_2) <- c("FDR (init)", "power (init)")
         df2 <- cbind(df2_1, df2_2)
-        df2_q <- df_q[-inds, ]
-        df2_q <- df2_q[seq(1, m, 2), ]
-
+        
         df <- rbind(df1, df2)
         df <- df[, c(1, 2, 5, 3, 6, 4)]
         df$alpha <- re$alpha
-        df_q <- rbind(df1_q, df2_q)
-        return(cbind(df, df_q))
+        return(cbind(df))
     })
     do.call(rbind, summaryres)
 }
-
 
 aggregate_expr <- function(objlist, alphas){
     res <- list()
