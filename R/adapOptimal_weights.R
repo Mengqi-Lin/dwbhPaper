@@ -44,11 +44,17 @@ adaptive_optimal.weights <- function(groups,
     st.pvals_g <- zvals_pvals(zvals_g[[j]], side)[o]
     
     if(type == "lin") {
-      t_g[j] <- approx(x = st.lfdr_g, y = st.pvals_g, xout = thr, yleft = 0, yright = 1, method="linear", ties = mean)$y
+      t_g[j] <- ifelse(!any(st.lfdr_g <= thr),
+                       0,
+                       approx(x = st.lfdr_g, y = st.pvals_g, xout = thr, yleft = 0, yright = 1, method="linear", ties = mean)$y
+      )
     } else if(type == "lin_exp") {
-      t_g[j] <- exp(approx(x = st.lfdr_g, y = log(st.pvals_g), xout = thr, yleft = -99999, yright = 0, method="linear", ties = mean)$y)
+      t_g[j] <- ifelse(!any(st.lfdr_g <= thr),
+                       0,
+                       exp(approx(x = st.lfdr_g, y = log(st.pvals_g), xout = thr, yleft = -99999, yright = 0, method="linear", ties = mean)$y)
+      )
     } else if(type == "max") {
-      if(!any(which(st.lfdr_g <= thr))) {
+      if(!any(st.lfdr_g <= thr)) {
         t_g[j] <- 0
       } else {
         cut_index <- max(which(st.lfdr_g <= thr))
@@ -60,7 +66,7 @@ adaptive_optimal.weights <- function(groups,
     }
   }
   
-  if(sum(t_g*pi_g*pi0_g) < 1e-6 | any(t_g < 1e-15)) {
+  if(sum(t_g*pi_g*pi0_g) < 1e-6) {
     return(rep(1/sum(pi_g*pi0_g), length(zvals)))
   }
   

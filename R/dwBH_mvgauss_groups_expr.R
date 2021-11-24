@@ -1,156 +1,87 @@
-dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g, 
-                                     rho, Sigma_type,
-                                     side,
-                                     alphas, nreps, weight_type,
-                                     MC,
-                                     gamma = 0.9,
-                                     tautype = "QC",
-                                     skip_dBH2 = TRUE,
-                                     ...){
-  if (!(length(n_g) == length(mu1_g) & length(n_g) == length(pi1_g))){
-    stop("Each group should have its corresponding pi1 and mu1.")
-  }
-  n <- sum(n_g)
-  ngroups <- length(n_g)
-  groups <- c()
-  mu <- c()
-  for (j in 1: ngroups) {
-    mu <- c(mu, genmu(n_g[j], pi1 = pi1_g[j], mu1 = mu1_g[j]))
-    groups <- c(groups, rep(j , n_g[j]))
-  }
-  # if (side == "right"){
-  #   mu <- abs(mu)
-  # } else if (side == "left"){
-  #   mu <- -abs(mu)
-  # }
-  H0 <- mu == 0
-  nalphas <- length(alphas)
-  Sigma <- genSigma(n, rho, Sigma_type)
-  eigSigma <- eigen(Sigma)
-  sqrtSigma <- with(eigSigma, vectors %*% (sqrt(values) * t(vectors)))
-  
-  methods <- gen_methods(gamma, weight_type, MC,
-                         skip_dBH2 = T)
-  
-  expr_params <- expand.grid(
-    gamma = gamma,
+source("~/Documents/GitHub/dbh/R/compute_knots_mvgauss.R")
+source("~/Documents/GitHub/dbh/R/dBH_mvgauss.R")
+source("~/Documents/GitHub/dbh/R/dBH_mvgauss_qc.R" )
+source("~/Documents/GitHub/dbh/R/adapOptimal_weights.R")
+source("~/Documents/GitHub/dbh/R/dBH_mvgauss_qc_optimal.R")
+source("~/Documents/GitHub/dbh/R/dBH_utils.R")
+library(Rcpp)
+sourceCpp("~/Documents/GitHub/dbh/src/RBH_homotopy.cpp")
+source("expr_functions.R")
+source("plot_function.R")
+
+
+n_g = c(5000, 500)
+MC = 10
+alphas = seq(0.01, 0.1, length.out = 10)
+skip_dBH2 = T
+gamma = 1
+weight_type = c("trivial", "optimal")
+nreps = 100
+## Different combinations of mu1 and pi1
+MU1 <- matrix(c(1, 2.5, 2, 2, 1, 3), 2)
+Pi1 <- matrix(c(0.1, 0.1, 0.01, 0.2, 0.01, 0.2), 2)
+
+
+set.seed(1)
+res <- lapply(1:3, function(i){
+  dwBH_mvgauss_groups_expr(
+    n_g = n_g, 
+    mu1_g = MU1[, i], 
+    pi1_g = Pi1[, i], 
+    rho = 0.8, 
+    Sigma_type = "AR",
+    side = "right",
+    alphas = alphas, 
+    nreps = nreps, 
+    MC = MC,
     weight_type = weight_type,
-    MC = MC
+    gamma = 1,
+    tautype = "QC",
+    skip_dBH2 = skip_dBH2
   )
-  
-  results <- lapply(1:nalphas, function(k){
-    tmp <- matrix(NA, length(methods), nreps)
-    rownames(tmp) <- methods
-    return(list(alpha = alphas[k],
-                FDP = tmp,
-                power = tmp,
-                secBH = tmp))
-  })
-  
-  pb <- txtProgressBar(style=3)
-  for (i in 1:nreps){
-    zvals <- as.numeric(mu + sqrtSigma %*% rnorm(n))
-    pvals <- zvals_pvals(zvals, side)
-    for (k in 1:nalphas){
-      obj <- list()
-      alpha <- alphas[k]
-      avals <- 1:n
-      ## BH rejections
+})
 
-      rejs_BH <- BH(pvals, alpha, avals, FALSE)
-      rejs_BH_safe <- BH(pvals, alpha, avals, TRUE)
-      obj <- c(obj, list(rejs_BH, rejs_BH_safe))
-      
-      ## Number of methods so far
-      nBH <- length(obj)
-      
-      for (j in 1:nrow(expr_params)){
-        fac <- expr_params[j, 1]
-        weight_type <- expr_params[j, 2]
-        MC <- expr_params[j, 3]
+postres <- lapply(res, postprocess)
+## Save data
+filename <- "../data/mvgauss_adapOptimal_AR0.8_oneside_MC10_gamma1.RData"
+save(postres, file = filename)
 
-        
-        avals_type <- "BH"
-        avals <- 1:n
-        qvals <- qvals_BH_reshape(pvals, avals)
-        if (is.na(fac)){
-          gamma <- NULL
-        } else {
-          gamma <- fac
-        }
-        rejs_dBH <- dBH_mvgauss(
-          zvals = zvals,
-          Sigma = Sigma,
-          side = side,
-          alpha = alpha,
-          gamma = gamma, 
-          covariates = groups,
-          niter = 1,
-          tautype = "QC",
-          weight_type = weight_type,
-          MC = MC,
-          avals_type = avals_type)
-        # rejs_dBH$maxq <- ifelse(
-        #   length(rejs_dBH$initrejs) == 0, NA,
-        #   max(qvals[rejs_dBH$initrejs] / alpha))
-        rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
-        obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
-      }
-      
-      if (!skip_dBH2){
-        ## dBH2 rejections
-        for (j in 1:nrow(expr_params)){
-          fac <- expr_params[j, 1]
-          weight_type  <- expr_params[j, 2]
-          type <- expr_params[j, 3]
-          avals_type <- "BH"
-          avals <- 1:n
-          
-          qvals <- qvals_BH_reshape(pvals, avals)
-          if (is.na(fac)){
-            gamma <- NULL
-          } else {
-            gamma <- fac
-          }
-          rejs_dBH2 <- dBH_mvgauss(
-            zvals = zvals,
-            Sigma = Sigma,
-            side = side,
-            alpha = alpha,
-            gamma = gamma, 
-            covariates = groups,
-            niter = 2,
-            tautype = type,
-            weight_type = weight_type,
-            avals_type = avals_type,
-            ...)
-          rejs_dBH2$maxq <- ifelse(
-            length(rejs_dBH2$initrejs) == 0, NA,
-            max(qvals[rejs_dBH2$initrejs] / alpha))
-          rejs_dBH2_init <- list(rejs = rejs_dBH2$initrejs)
-          obj <- c(obj, list(rejs_dBH2, rejs_dBH2_init))
-        }
-      }
-      
-      res <- sapply(obj, function(output){
-        FDPpower(output$rejs, H0)
-      })
-      results[[k]]$FDP[, i] <- as.numeric(res[1, ])
-      results[[k]]$power[, i] <- as.numeric(res[2, ])
-      inds <- seq(nBH + 1, length(methods), 2)
-      results[[k]]$secBH[inds, i] <- sapply(obj[inds], function(output){
-        output$secBH
-      })
-      # results[[k]]$qcap[inds, i] <- sapply(obj[inds], function(output){
-      #   output$maxq
-      # })
-      setTxtProgressBar(pb, ((i-1)*nalphas + k)/(nreps*nalphas))
-    }
-  }
-  
-  close(pb)
-  return(results)
-}
+postres <- lapply(res, wBH_postprocess)
+methods <- gen_methods(gamma = gamma, MC = MC, weight_type = weight_type, skip_dBH2 = T)
+init_index <- grep("init", methods)
+methods <- methods[-init_index]
+title <- bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i]))
 
+## Plot results
+FDR.filename <- "../figs/FDR_mvgauss_adapOptimal_AR0.8_oneside_MC10_gamma1.pdf"
+pdf(FDR.filename, width = 9, height = 2.8)
+cols <- c('black', 'grey','green', 'blue')
+ltys <- c(2,2,1,1)
+pchs <- c(1,1,0,2) 
 
+pdf(FDR.filename, width = 21, height = 7)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2), oma=c(0, 0, 0, 5), cex.axis = 1.7, cex.main = 1.7, cex.lab = 1.7)
+lapply(1:3, function(i){
+  plot_results(postres[[i]]$FDR[-init_index,], methods, 
+               title = bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i])),
+               cols = cols, ltys = ltys, pchs = pchs, lwd = 1.2,
+               ylim = c(0, 0.12), ylab = "FDR",
+               legend = T, cex.legend = 3,
+               alphas = alphas)
+  abline(a = 0, b=1, col = "red")
+})
+abline(a = 0, b=1, col = "red")
+dev.off()
 
+power.filename <- "../figs/power_mvgauss_adapOptimal_AR0.8_oneside_MC10_gamma1.pdf"
+pdf(power.filename, width = 21, height = 7)
+par(mfrow = c(1, 3), mar = c(4, 5, 2, 2), oma=c(0, 0, 0, 5), cex.axis = 1.7, cex.main = 1.7, cex.lab = 1.7)
+lapply(1:3, function(i){
+  plot_results(postres[[i]]$power, methods, 
+               title = bquote(mu[1]~ ": " ~ .(MU1[1, i])~" vs "~ .(MU1[2, i])~", "~ pi[1]~": "~ .(Pi1[1, i])~" vs "~ .(Pi1[2, i])),
+               cols = cols, ltys = ltys, pchs = pchs, lwd = 1.2,
+               ylim = c(0, 1), ylab = "power",
+               legend = F, cex.legend = 3,
+               alphas = alphas)
+})
+dev.off()

@@ -11,22 +11,22 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 ```{r}
-source("compute_knots_mvgauss.R")
-source("dBH_mvgauss.R")
-source("dBH_mvgauss_qc.R" )
-source("dBH_mvgauss.R")
-source("adapOptimal_weights.R")
-source("dBH_mvgauss_qc_optimal.R")
-source("dBH_utils.R")
-source("RcppExports.R")
-source("import-packages.R")
+source("~/Documents/GitHub/dbh/R/compute_knots_mvgauss.R")
+source("~/Documents/GitHub/dbh/R/dBH_mvgauss.R")
+source("~/Documents/GitHub/dbh/R/dBH_mvgauss_qc.R" )
+source("~/Documents/GitHub/dbh/R/adapOptimal_weights.R")
+source("~/Documents/GitHub/dbh/R/dBH_mvgauss_qc_optimal.R")
+source("~/Documents/GitHub/dbh/R/dBH_utils.R")
 library(Rcpp)
-sourceCpp("RBH_homotopy.cpp")
+sourceCpp("~/Documents/GitHub/dbh/src/RBH_homotopy.cpp")
+source("expr_functions.R")
+source("plot_function.R")
+source("demo_utils.R")
 ```
 
 
 ```{r}
-n_g = c(500, 5000) 
+n_g = c(500, 5000)
 mu1_g = c(2, 2)
 pi1_g = c(0.2, 0.01)
 pi0_g = 1-pi1_g
@@ -37,8 +37,9 @@ ow
 ```
 
 ```{r}
+nreps = 100
 set.seed(1)
-data <- gen_data(n_g, mu1_g, pi1_g, rho = 0.8, Sigma_type = "AR", side = "one", nreps = 100)
+data <- gen_data(n_g, mu1_g, pi1_g, rho = 0.8, Sigma_type = "AR", side = "one", nreps = nreps)
 ZVALS <- data$zvals
 groups <- data$groups
 H0 <- data$H0
@@ -53,13 +54,14 @@ plot(groups)
 ```
 
 
-```{r}
-dBH_mvgauss(zvals = ZVALS[[3]],
+```{r warning=FALSE}
+tmpres <- lapply(1:100, function(id){
+  dBH_mvgauss(zvals = ZVALS[[id]],
   Sigma = Sigma,
   side = c("right"),
   covariates = groups,
   weight_type = "optimal",
-  MC = 1,
+  MC = 10,
   alpha = 0.05, 
   gamma = 1,
   niter = 1,
@@ -67,31 +69,55 @@ dBH_mvgauss(zvals = ZVALS[[3]],
   avals_type = "BH",
   qcap = 2,
   pi0Est = F)
+}
+)
+  
+
 #925  926 1015 1016 1017 1018 1083 1084
 ```
 
 ```{r}
-
+lapply(1:nreps, function(i){
+  if(tmpres[[i]]$secBH){
+    print(tmpres[[i]]$weights)
+    print(tmpres[[i]]$cand<=100)
+  }
+})
 ```
 
 
-
-
 ```{r}
-dbh <- dBH_mvgauss(zvals = ZVALS[[19]],
+dBH_mvgauss(zvals = ZVALS[[2]],
   Sigma = Sigma,
   side = c("right"),
   covariates = groups,
-  weight_type = "optimal",
-  MC = 1,
-  alpha = 0.05, gamma = 1,
+  weight_type = "trivial",
+  alpha = 0.05, 
+  gamma = 1,
   niter = 1,
   tautype = "QC",
   avals_type = "BH",
   qcap = 2,
+  pi0Est = F)
+```
+
+
+
+
+```{r warning=FALSE}
+dBH_mvgauss(zvals = ZVALS[[5]],
+  Sigma = Sigma,
+  side = c("right"),
+  covariates = groups,
+  weight_type = "optimal",
+  MC = 10,
+  alpha = 0.05, gamma = 1,
+  niter = 1,
+  tautype = "QC",
+  avals_type = "BH",
+  qcap = 4,
   lfdrinv_type = "lin_exp")
 #925  926 1015 1016 1017 1018 1083 1084
-dbh
 ```
 
 ```{r}

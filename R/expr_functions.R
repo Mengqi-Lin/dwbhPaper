@@ -1,5 +1,3 @@
-library("dbh")
-source("knockoffs.R")
 source("dBH_utils.R")
 source("utils.R")
 
@@ -208,41 +206,6 @@ dwBH_mvgauss_groups_expr <- function(n_g, mu1_g, pi1_g,
                 #   max(qvals[rejs_dBH$initrejs] / alpha))
                 rejs_dBH_init <- list(rejs = rejs_dBH$initrejs)
                 obj <- c(obj, list(rejs_dBH, rejs_dBH_init))
-            }
-            
-            if (!skip_dBH2){
-                ## dBH2 rejections
-                for (j in 1:nrow(expr_params)){
-                    fac <- expr_params[j, 1]
-                    weight_type  <- expr_params[j, 2]
-                    type <- expr_params[j, 3]
-                    avals_type <- "BH"
-                    avals <- 1:n
-                    
-                    qvals <- qvals_BH_reshape(pvals, avals)
-                    if (is.na(fac)){
-                        gamma <- NULL
-                    } else {
-                        gamma <- fac
-                    }
-                    rejs_dBH2 <- dBH_mvgauss(
-                        zvals = zvals,
-                        Sigma = Sigma,
-                        side = side,
-                        alpha = alpha,
-                        gamma = gamma, 
-                        covariates = groups,
-                        niter = 2,
-                        tautype = type,
-                        weight_type = weight_type,
-                        avals_type = avals_type,
-                        ...)
-                    rejs_dBH2$maxq <- ifelse(
-                        length(rejs_dBH2$initrejs) == 0, NA,
-                        max(qvals[rejs_dBH2$initrejs] / alpha))
-                    rejs_dBH2_init <- list(rejs = rejs_dBH2$initrejs)
-                    obj <- c(obj, list(rejs_dBH2, rejs_dBH2_init))
-                }
             }
             
             res <- sapply(obj, function(output){
@@ -462,6 +425,36 @@ postprocess <- function(res){
         return(cbind(df))
     })
     do.call(rbind, summaryres)
+}
+
+
+
+wBH_postprocess <- function(res){
+    summaryres <- lapply(res, function(re){
+        FDR <- as.numeric(rowMeans(re$FDP))
+        FDR <- round(FDR, 4)
+        power <- as.numeric(rowMeans(re$power))
+        methods <- rownames(re$power)
+        df <- data.frame(method = methods,
+                         FDR = FDR,
+                         power = power)
+        df$alpha <- re$alpha
+        return(df)
+    })
+    
+    nmethods <- length(methods)
+    nalphas <- length(methods)
+    FDR <- matrix(NA, nmethods, nalphas)
+    power <- matrix(NA, nmethods, nalphas)
+    
+    df <- do.call(cbind, summaryres)
+    FDR <- df[, which(colnames(df)=="FDR")]
+    power <- df[, which(colnames(df)=="power")]
+    
+    # methods <- rownames(df[,"method"])
+    # rownames(FDR) <- methods
+    # rownames(power) <- methods
+    return(list(FDR = FDR, power = power))
 }
 
 aggregate_expr <- function(objlist, alphas){
